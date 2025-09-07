@@ -2,3 +2,7 @@ pytest
 click
 pylint
 pytest-cov
+fastapi
+uvicorn
+locust
+requests

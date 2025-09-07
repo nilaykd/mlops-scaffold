@@ -1,0 +1,48 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: ap-south-1
+    IMAGE_REPO_NAME: mlops-scaffold
+    ECR_URI: 253896052891.dkr.ecr.ap-south-1.amazonaws.com/mlops-scaffold
+  shell: bash
+
+phases:
+  install:
+    commands:
+      - set -e
+      - python -m pip install --upgrade pip
+      - pip install -r requirements.txt
+      - pip install pytest locust
+  pre_build:
+    commands:
+      - echo "Running unit tests"
+      - pytest -q
+      - echo "Logging in to ECR"
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
+        | docker login --username AWS --password-stdin "$(echo $ECR_URI | cut -d/ -f1)"
+  build:
+    commands:
+      - echo "Build & push image tagged with commit SHA"
+      - COMMIT_SHA="$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c1-7)"
+      - docker build -t "$IMAGE_REPO_NAME:$COMMIT_SHA" .
+      - docker tag "$IMAGE_REPO_NAME:$COMMIT_SHA" "$ECR_URI:$COMMIT_SHA"
+      - docker push "$ECR_URI:$COMMIT_SHA"
+
+      - echo "Run the container so Locust can hit it"
+      - docker run -d --rm -p 8000:8000 --name svc "$ECR_URI:$COMMIT_SHA"
+      - sleep 5
+
+      - echo "Run Locust headless for 1 minute against localhost:8000"
+      - locust -f locustfile.py --headless -u 20 -r 5 -t 1m \
+          -H http://localhost:8000 \
+          --html report.html --csv results --exit-code-on-error 1
+  post_build:
+    commands:
+      - docker stop svc || true
+
+artifacts:
+  files:
+    - report.html
+    - results*.csv
+  name: "loadtest-$CODEBUILD_BUILD_NUMBER"

@@ -1,0 +1,36 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: ap-south-1
+    IMAGE_REPO_NAME: mlops-scaffold
+    ECR_URI: 253896052891.dkr.ecr.ap-south-1.amazonaws.com/mlops-scaffold
+  shell: bash
+
+phases:
+  install:
+    commands:
+      - set -e
+      - echo "Installing test deps"
+      - python -m pip install --upgrade pip
+      - pip install -r requirements.txt
+      - pip install pytest
+  pre_build:
+    commands:
+      - echo "Running unit tests"
+      - pytest -q
+      - echo "Logging in to ECR"
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
+        | docker login --username AWS --password-stdin "$(echo $ECR_URI | cut -d/ -f1)"
+  build:
+    commands:
+      - echo "Building Docker image"
+      - COMMIT_SHA="$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c1-7)"
+      - docker build -t "$IMAGE_REPO_NAME:$COMMIT_SHA" -t "$IMAGE_REPO_NAME:latest" .
+      - docker tag "$IMAGE_REPO_NAME:$COMMIT_SHA" "$ECR_URI:$COMMIT_SHA"
+      - docker tag "$IMAGE_REPO_NAME:latest"      "$ECR_URI:latest"
+  post_build:
+    commands:
+      - echo "Pushing images to ECR"
+      - docker push "$ECR_URI:$COMMIT_SHA"
+      - docker push "$ECR_URI:latest"
